@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate 3D Gesture VFX - Cinematic Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #video-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        #video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        
+        #canvas3d { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
+        #overlay-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 3; background: rgba(0,0,0,0.3); pointer-events: none; transition: background 0.3s; }
+        #skeleton-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 4; pointer-events: none; }
+        #ui-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 5; pointer-events: none; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 6; pointer-events: none; }
+        
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,255,255,0.4); border-radius: 3px; }
+
+        .glass-panel {
+            background: rgba(15, 15, 25, 0.4);
+            backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            pointer-events: auto;
+        }
+
+        #scene-selector {
+            position: absolute; right: 20px; top: 20px; width: 220px;
+            max-height: 80vh; overflow-y: auto; overflow-x: hidden;
+        }
+
+        .glass-item {
+            padding: 15px; margin-bottom: 10px; color: white; font-size: 16px; font-weight: 500;
+            border-radius: 10px; background: rgba(255,255,255,0.05);
+            border: 1px solid transparent; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex; align-items: center; gap: 12px;
+        }
+        .glass-item:hover { background: rgba(255,255,255,0.15); transform: translateX(-5px); }
+        .glass-item.active {
+            background: rgba(0, 200, 255, 0.3); border-color: rgba(0, 255, 255, 0.6);
+            box-shadow: 0 0 20px rgba(0,255,255,0.4); transform: translateX(-10px);
+        }
+
+        #status-panel {
+            position: absolute; bottom: 30px; left: 30px; min-width: 250px;
+        }
+
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 10; color: white; font-size: 24px;
+            background: rgba(0,0,0,0.8); padding: 30px 50px; border-radius: 20px;
+            border: 1px solid #00ffff; box-shadow: 0 0 30px rgba(0, 255, 255, 0.3); text-align: center;
+        }
+        .loading-spinner {
+            border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #00ffff;
+            border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px auto;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        #flash {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: white; opacity: 0; z-index: 9; pointer-events: none;
+            transition: opacity 0.5s ease-out;
+        }
+        #vignette {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.8) 100%);
+            z-index: 3; pointer-events: none; opacity: 0.5;
+        }
+        #gesture-history {
+            position: absolute; top: 20px; left: 20px; z-index: 7;
+            display: flex; flex-direction: column; gap: 5px; pointer-events: none;
+        }
+        .gh-item {
+            background: rgba(0,255,255,0.15); border: 1px solid rgba(0,255,255,0.3);
+            border-radius: 20px; padding: 5px 14px; color: #0ff; font-size: 13px;
+            backdrop-filter: blur(8px); animation: fadeInLeft 0.3s ease;
+        }
+        @keyframes fadeInLeft { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+        #fps-counter {
+            position: absolute; bottom: 30px; right: 260px; z-index: 7;
+            color: #0ff; font-size: 13px; opacity: 0.7; pointer-events: none;
+            font-family: monospace;
+        }
+    </style>
+    <!-- Core Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Post-Processing (Bloom) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <div id="loading"><div class="loading-spinner"></div><div>Loading Cinematic VFX Engine...</div></div>
+    
+    <div id="video-container"><video id="video" autoplay playsinline></video></div>
+    <div id="overlay-layer"></div>
+    <div id="vignette"></div>
+    <div id="flash"></div>
+    <div id="gesture-history"></div>
+    <div id="fps-counter">FPS: --</div>
+    
+    <canvas id="canvas3d"></canvas>
+    <canvas id="skeleton-canvas"></canvas>
+    <canvas id="ui-canvas"></canvas>
+    
+    <div id="ui-layer">
+        <div id="scene-selector" class="glass-panel">
+            <h4 style="margin:0 0 15px 0; color:#0ff; text-align:center; font-weight:700; letter-spacing: 1px;">VFX SCENES</h4>
+            <div class="glass-item active" id="btn-rain" data-scene="rain"><span>🌧️</span> Rain</div>
+            <div class="glass-item" id="btn-hurricane" data-scene="hurricane"><span>🌪️</span> Hurricane</div>
+            <div class="glass-item" id="btn-leaves" data-scene="leaves"><span>🍃</span> Leaves</div>
+            <div class="glass-item" id="btn-fire" data-scene="fire"><span>🔥</span> Fire Sparks</div>
+            <div class="glass-item" id="btn-wind" data-scene="wind"><span>💨</span> Wind Flow</div>
+            <div class="glass-item" id="btn-clouds" data-scene="clouds"><span>☁️</span> Clouds</div>
+            <div class="glass-item" id="btn-energy" data-scene="energy"><span>✨</span> Energy Ball</div>
+            <div class="glass-item" id="btn-supernova" data-scene="supernova"><span>🌌</span> Supernova</div>
+        </div>
+        
+        <div id="status-panel" class="glass-panel">
+            <h3 style="margin: 0 0 10px 0; color: #0ff; font-weight: 600;">Gesture Engine</h3>
+            <div id="gesture-text" style="font-size: 20px; font-weight: bold; margin-bottom: 5px; color: #fff;">Scanning...</div>
+            <div id="action-text" style="font-size: 15px; color: #ff0ff0; margin-bottom: 12px; font-weight: 500; min-height: 22px;"></div>
+            <div style="font-size: 13px; color: #ccc; line-height: 1.6;">
+                ✋ Open Palm = Freeze Time<br>
+                ✊ Fist = Explode Burst<br>
+                👆 Point (Thumb in) = Vortex<br>
+                📐 Pinch & Expand = Zoom<br>
+                🤏 Pinch (Open hand) = Spawn<br>
+                🙌 Two Hands = Gather<br>
+                👏 Clap = Thunderclap<br>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Audio Synthesizer ---
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx; let ambientNode = null;
+        function initAudio() { if (!audioCtx) audioCtx = new AudioContext(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
+        document.body.addEventListener('click', initAudio, { once: true });
+
+        function playAmbient(type) {
+            if (!audioCtx) return;
+            if (ambientNode) { try { ambientNode.stop(); } catch(e) {} ambientNode = null; }
+            const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+            const data = buf.getChannelData(0);
+            for (let i = 0; i < data.length; i++) {
+                if (type === 'rain') data[i] = (Math.random() * 2 - 1) * 0.08;
+                else if (type === 'fire') data[i] = (Math.random() * 2 - 1) * 0.05 * Math.sin(i * 0.001);
+                else if (type === 'wind') data[i] = (Math.random() * 2 - 1) * 0.06 * Math.sin(i * 0.0005);
+                else data[i] = 0;
+            }
+            const src = audioCtx.createBufferSource(); src.buffer = buf; src.loop = true;
+            const g = audioCtx.createGain(); g.gain.value = 0.4;
+            src.connect(g); g.connect(audioCtx.destination);
+            src.start(); ambientNode = src;
+        }
+
+        function playSound(type) {
+            if (!audioCtx) initAudio();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass'; osc.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+            const now = audioCtx.currentTime;
+            
+            if (type === 'freeze') {
+                osc.type = 'sine'; filter.frequency.value = 2000;
+                osc.frequency.setValueAtTime(800, now); osc.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+                gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now); osc.stop(now + 0.5);
+            } else if (type === 'explode') {
+                osc.type = 'square'; filter.frequency.setValueAtTime(1000, now); filter.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+                osc.frequency.setValueAtTime(150, now); osc.frequency.exponentialRampToValueAtTime(40, now + 0.5);
+                gain.gain.setValueAtTime(0.8, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now); osc.stop(now + 0.5);
+            } else if (type === 'clap') {
+                osc.type = 'sawtooth'; filter.frequency.setValueAtTime(2000, now); filter.frequency.exponentialRampToValueAtTime(50, now + 0.8);
+                osc.frequency.setValueAtTime(100, now); osc.frequency.exponentialRampToValueAtTime(20, now + 0.8);
+                gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.8);
+                osc.start(now); osc.stop(now + 0.8);
+            } else if (type === 'spawn') {
+                osc.type = 'triangle'; filter.frequency.value = 3000;
+                osc.frequency.setValueAtTime(400, now); osc.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+                gain.gain.setValueAtTime(0.3, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                osc.start(now); osc.stop(now + 0.2);
+            }
+        }
+
+        // --- Texture Generation for Realism ---
+        function createDropTexture() {
+            const c = document.createElement('canvas'); c.width = 16; c.height = 64; const ctx = c.getContext('2d');
+            const g = ctx.createLinearGradient(0,0,0,64); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.8)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g; ctx.fillRect(0,0,16,64); return new THREE.CanvasTexture(c);
+        }
+        function createRadialTexture() {
+            const c = document.createElement('canvas'); c.width = 64; c.height = 64; const ctx = c.getContext('2d');
+            const g = ctx.createRadialGradient(32,32,0, 32,32,32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.3, 'rgba(255,255,255,0.8)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g; ctx.fillRect(0,0,64,64); return new THREE.CanvasTexture(c);
+        }
+        function createCloudTexture() {
+            const c = document.createElement('canvas'); c.width = 128; c.height = 128; const ctx = c.getContext('2d');
+            const g = ctx.createRadialGradient(64,64,0, 64,64,64); g.addColorStop(0, 'rgba(255,255,255,0.8)'); g.addColorStop(0.3, 'rgba(255,255,255,0.5)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g; ctx.fillRect(0,0,128,128); return new THREE.CanvasTexture(c);
+        }
+
+        // --- 1. Three.js Setup & Post-Processing ---
+        const canvas3d = document.getElementById('canvas3d');
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 4000);
+        camera.position.z = 600;
+
+        // Cinematic Post-Processing (Bloom)
+        const renderScene = new THREE.RenderPass(scene, camera);
+        renderScene.clearColor = new THREE.Color(0,0,0); renderScene.clearAlpha = 0; // Maintain video transparency
+        
+        const bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.15; // Lower threshold catches fire and energy
+        bloomPass.strength = 1.5;   // Intense cinematic glow
+        bloomPass.radius = 0.8;
+        
+        const composer = new THREE.EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        let currentScene = 'rain';
+        let isTimeFrozen = false;
+        let speedMult = 1.0;
+        let targetGatherPoint = null;
+        let smoothGatherPoint = new THREE.Vector3();
+        let isGathering = false;
+        let explosionImpulse = 0;
+        let explosionCenter = new THREE.Vector3(0,0,0);
+        let energyBallTargetPos = null;
+        let energyBallTargetScale = 0;
+
+        // --- Materials ---
+        const dropTex = createDropTexture(); const radialTex = createRadialTexture(); const cloudTex = createCloudTexture();
+        const largeRainMat = new THREE.PointsMaterial({ color: 0xcceeff, size: 50, transparent: true, opacity: 0.9, map: dropTex, blending: THREE.AdditiveBlending, depthWrite: false });
+        const smallRainMat = new THREE.PointsMaterial({ color: 0x88bbff, size: 20, transparent: true, opacity: 0.5, map: dropTex, blending: THREE.AdditiveBlending, depthWrite: false });
+        const vortexMaterial = new THREE.PointsMaterial({ color: 0x88ffff, size: 12, transparent: true, opacity: 0.8, map: radialTex, blending: THREE.AdditiveBlending, depthWrite: false }); // Glowing hurricane
+
+        // --- Scene 1: Rain ---
+        const rainGroup = new THREE.Group();
+        const bigRainGeo = new THREE.BufferGeometry(); const bigRainCount = 500; const bigPos = new Float32Array(bigRainCount * 3); const bigData = [];
+        for(let i=0; i<bigRainCount; i++) {
+            bigPos[i*3] = (Math.random()-0.5)*2500; bigPos[i*3+1] = (Math.random()-0.5)*2000; bigPos[i*3+2] = Math.random()*800 - 200;
+            bigData.push({ baseSpeed: 15 + Math.random()*10, vx: 0, vy: 0, vz: 0 });
+        }
+        bigRainGeo.setAttribute('position', new THREE.BufferAttribute(bigPos, 3)); rainGroup.add(new THREE.Points(bigRainGeo, largeRainMat));
+        const smallRainGeo = new THREE.BufferGeometry(); const smallRainCount = 2000; const smallPos = new Float32Array(smallRainCount * 3); const smallData = [];
+        for(let i=0; i<smallRainCount; i++) {
+            smallPos[i*3] = (Math.random()-0.5)*3000; smallPos[i*3+1] = (Math.random()-0.5)*2000; smallPos[i*3+2] = Math.random()*1000 - 1500;
+            smallData.push({ baseSpeed: 8 + Math.random()*5, vx: 0, vy: 0, vz: 0 });
+        }
+        smallRainGeo.setAttribute('position', new THREE.BufferAttribute(smallPos, 3)); rainGroup.add(new THREE.Points(smallRainGeo, smallRainMat));
+        scene.add(rainGroup);
+
+        // --- Scene 2: Hurricane ---
+        const hurrGeo = new THREE.BufferGeometry(); const hurrCount = 3000; const hurrPos = new Float32Array(hurrCount * 3); const hurrData = [];
+        for(let i=0; i<hurrCount; i++) {
+            let angle = Math.random() * Math.PI * 2; let radius = 50 + Math.random() * 800; let height = (Math.random()-0.5) * 1500;
+            hurrPos[i*3] = Math.cos(angle)*radius; hurrPos[i*3+1] = height; hurrPos[i*3+2] = Math.sin(angle)*radius;
+            hurrData.push({ angle, radius, height, speed: 0.02 + Math.random()*0.05, inward: 0.5 + Math.random()*2, vx:0, vy:0, vz:0 });
+        }
+        hurrGeo.setAttribute('position', new THREE.BufferAttribute(hurrPos, 3));
+        const hurrSystem = new THREE.Points(hurrGeo, vortexMaterial); hurrSystem.visible = false; scene.add(hurrSystem);
+
+        // --- Scene 3: Leaves (Realistic Shading) ---
+        const leaves = []; const leafGeo = new THREE.CircleGeometry(10, 6); 
+        for(let i=0; i<150; i++) {
+            // Use Phong for realistic lighting/shading on leaves instead of Basic
+            let mat = new THREE.MeshPhongMaterial({ color: new THREE.Color(`hsl(${5 + Math.random()*45}, 90%, 50%)`), side: THREE.DoubleSide, shininess: 20 });
+            let mesh = new THREE.Mesh(leafGeo, mat);
+            mesh.position.set((Math.random()-0.5)*2500, 500 + Math.random()*1500, (Math.random()-0.5)*1500);
+            mesh.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+            mesh.userData = { fallSpeed: 1.5 + Math.random()*3, rotSpeed: new THREE.Vector3((Math.random()-0.5)*0.1, (Math.random()-0.5)*0.1, (Math.random()-0.5)*0.1), drift: Math.random()*4 - 2, time: Math.random()*100, vx:0, vy:0, vz:0 };
+            leaves.push(mesh); scene.add(mesh); mesh.visible = false;
+        }
+        // Add ambient light for leaves
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8); dirLight.position.set(0, 1, 1); scene.add(dirLight);
+
+        // --- Scene 4: Energy Ball ---
+        const energyBallGroup = new THREE.Group();
+        energyBallGroup.add(new THREE.Mesh(new THREE.SphereGeometry(35, 32, 32), new THREE.MeshBasicMaterial({ color: 0xffffff })));
+        energyBallGroup.add(new THREE.Mesh(new THREE.SphereGeometry(65, 32, 32), new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending })));
+        const eGeo = new THREE.BufferGeometry(); const eCount = 1500; const ePos = new Float32Array(eCount*3); const eData = [];
+        for(let i=0; i<eCount; i++){
+            ePos[i*3] = (Math.random()-0.5)*300; ePos[i*3+1] = (Math.random()-0.5)*300; ePos[i*3+2] = (Math.random()-0.5)*300;
+            eData.push({ angleX: Math.random()*Math.PI*2, angleY: Math.random()*Math.PI*2, radius: 50 + Math.random()*100, speed: 0.05 + Math.random()*0.1 });
+        }
+        eGeo.setAttribute('position', new THREE.BufferAttribute(ePos, 3));
+        energyBallGroup.add(new THREE.Points(eGeo, new THREE.PointsMaterial({ color: 0x88ffff, size: 8, blending: THREE.AdditiveBlending, transparent: true, map: radialTex, depthWrite: false })));
+        energyBallGroup.visible = false; energyBallGroup.scale.set(0.01, 0.01, 0.01); scene.add(energyBallGroup);
+
+        // --- Scene 5: Fire Sparks (Dynamic Colors) ---
+        const fireGeo = new THREE.BufferGeometry(); const fireCount = 1500; const firePos = new Float32Array(fireCount * 3); const fireData = [];
+        const fireColors = new Float32Array(fireCount * 3);
+        for(let i=0; i<fireCount; i++) {
+            firePos[i*3] = (Math.random()-0.5)*2500; firePos[i*3+1] = (Math.random()-0.5)*2000; firePos[i*3+2] = (Math.random()-0.5)*1000;
+            fireColors[i*3] = 1; fireColors[i*3+1] = 0.5; fireColors[i*3+2] = 0; // Initialize
+            fireData.push({ life: Math.random(), speedY: 8 + Math.random()*15, driftX: (Math.random()-0.5)*8, vx:0, vy:0, vz:0 });
+        }
+        fireGeo.setAttribute('position', new THREE.BufferAttribute(firePos, 3)); fireGeo.setAttribute('color', new THREE.BufferAttribute(fireColors, 3));
+        const fireSystem = new THREE.Points(fireGeo, new THREE.PointsMaterial({ size: 100, vertexColors: true, transparent: true, opacity: 0.8, map: radialTex, blending: THREE.AdditiveBlending, depthWrite: false }));
+        fireSystem.visible = false; scene.add(fireSystem);
+
+        // --- Scene 6: Wind Flow ---
+        const windGeo = new THREE.BufferGeometry(); const windCount = 800; const windPos = new Float32Array(windCount * 6); const windData = [];
+        for(let i=0; i<windCount; i++) {
+            let x = (Math.random()-0.5)*4000; let y = (Math.random()-0.5)*2500; let z = (Math.random()-0.5)*1500; let len = 150 + Math.random()*500;
+            windPos[i*6] = x; windPos[i*6+1] = y; windPos[i*6+2] = z; windPos[i*6+3] = x + len; windPos[i*6+4] = y; windPos[i*6+5] = z;
+            windData.push({ speedX: 50 + Math.random()*80, len: len });
+        }
+        windGeo.setAttribute('position', new THREE.BufferAttribute(windPos, 3));
+        const windSystem = new THREE.LineSegments(windGeo, new THREE.LineBasicMaterial({ color: 0xccffff, transparent: true, opacity: 0.4 }));
+        windSystem.visible = false; scene.add(windSystem);
+
+        // --- Scene 7: Clouds (Volumetric soft particles) ---
+        const cloudGeo = new THREE.BufferGeometry(); const cloudCount = 200; const cloudPos = new Float32Array(cloudCount * 3); const cloudData = [];
+        for(let i=0; i<cloudCount; i++) {
+            cloudPos[i*3] = (Math.random()-0.5)*4000; cloudPos[i*3+1] = (Math.random()-0.5)*2500; cloudPos[i*3+2] = (Math.random()-0.5)*1500;
+            cloudData.push({ drift: (Math.random()-0.5)*3, vx:0, vy:0, vz:0 });
+        }
+        cloudGeo.setAttribute('position', new THREE.BufferAttribute(cloudPos, 3));
+        const cloudSystem = new THREE.Points(cloudGeo, new THREE.PointsMaterial({ color: 0xaaaaee, size: 700, transparent: true, opacity: 0.15, map: cloudTex, depthWrite: false }));
+        cloudSystem.visible = false; scene.add(cloudSystem);
+
+        // --- Scene 8: Supernova (Cinematic Burst) ---
+        const novaGroup = new THREE.Group(); const novaGeo = new THREE.BufferGeometry(); const novaCount = 3000; const novaPos = new Float32Array(novaCount*3); const novaData = [];
+        for(let i=0; i<novaCount; i++) {
+            novaPos[i*3] = 0; novaPos[i*3+1] = 0; novaPos[i*3+2] = 0;
+            const u = Math.random(); const v = Math.random(); const theta = u * 2.0 * Math.PI; const phi = Math.acos(2.0 * v - 1.0); const r = Math.cbrt(Math.random());
+            novaData.push({ dx: r * Math.sin(phi) * Math.cos(theta), dy: r * Math.sin(phi) * Math.sin(theta), dz: r * Math.cos(phi), speed: 30 + Math.random()*50, life: 0 });
+        }
+        novaGeo.setAttribute('position', new THREE.BufferAttribute(novaPos, 3));
+        novaGroup.add(new THREE.Points(novaGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 15, transparent: true, opacity: 1.0, map: radialTex, blending: THREE.AdditiveBlending, depthWrite: false })));
+        novaGroup.visible = false; let isNovaActive = false; scene.add(novaGroup);
+
+        // Scene sky colors for dynamic theming
+        const sceneSky = {
+            rain: 'rgba(0,10,40,0.45)', hurricane: 'rgba(20,15,30,0.5)', leaves: 'rgba(10,25,5,0.35)',
+            fire: 'rgba(40,5,0,0.5)', wind: 'rgba(5,20,30,0.4)', clouds: 'rgba(15,20,40,0.35)',
+            energy: 'rgba(0,10,40,0.3)', supernova: 'rgba(30,10,40,0.6)'
+        };
+        const sceneAmbient = { rain: 'rain', fire: 'fire', wind: 'wind', hurricane: 'wind', clouds: 'rain' };
+
+        // Gesture history
+        let gestureHistory = [];
+        function addGestureHistory(g) {
+            if (gestureHistory[0] === g) return;
+            gestureHistory.unshift(g); if (gestureHistory.length > 3) gestureHistory.pop();
+            document.getElementById('gesture-history').innerHTML = gestureHistory.map(h => `<div class="gh-item">${h}</div>`).join('');
+        }
+
+        // --- UI Logic ---
+        function switchScene(name) {
+            // Crossfade: flash overlay briefly
+            const ol = document.getElementById('overlay-layer');
+            ol.style.transition = 'background 0.5s ease';
+            ol.style.background = 'rgba(0,0,0,0.8)';
+            setTimeout(() => { ol.style.background = sceneSky[name] || 'rgba(0,0,0,0.3)'; }, 300);
+
+            currentScene = name;
+            rainGroup.visible = (name === 'rain');
+            hurrSystem.visible = (name === 'hurricane');
+            leaves.forEach(l => l.visible = (name === 'leaves'));
+            fireSystem.visible = (name === 'fire');
+            windSystem.visible = (name === 'wind');
+            cloudSystem.visible = (name === 'clouds');
+            if(name !== 'energy') energyBallGroup.visible = false;
+            if(name === 'supernova') triggerSupernova();
+            if (sceneAmbient[name]) playAmbient(sceneAmbient[name]);
+            else if (ambientNode) { try { ambientNode.stop(); } catch(e){} ambientNode = null; }
+
+            document.querySelectorAll('.glass-item').forEach(btn => btn.classList.remove('active'));
+            const btn = document.getElementById('btn-' + name);
+            if(btn) btn.classList.add('active');
+        }
+
+        document.querySelectorAll('.glass-item').forEach(btn => {
+            btn.addEventListener('click', () => { initAudio(); switchScene(btn.dataset.scene); });
+        });
+
+        // --- Shockwave rings ---
+        let shockwaves = []; // {x,y,r,maxR,alpha}
+        function spawnShockwave(sx, sy) {
+            // Convert 3D coords to approx screen coords
+            const sw = skeletonCanvas.width, sh = skeletonCanvas.height;
+            shockwaves.push({ x: sw/2 + (sx/2000)*sw*0.5, y: sh/2 - (sy/1500)*sh*0.5, r: 10, maxR: 250, alpha: 1.0 });
+        }
+
+        // --- Visual Effects Triggers ---
+        function triggerExplosion(x, y, z, strength=50) {
+            explosionCenter.set(x, y, z); explosionImpulse = strength;
+            spawnShockwave(x, y);
+            const flash = document.getElementById('flash');
+            flash.style.transition = 'none'; flash.style.opacity = '0.9';
+            setTimeout(() => { flash.style.transition = 'opacity 0.6s ease-out'; flash.style.opacity = '0'; }, 50);
+        }
+
+        function triggerSupernova() {
+            isNovaActive = true; novaGroup.visible = true;
+            const pos = novaGeo.attributes.position;
+            for(let i=0; i<novaCount; i++) { pos.setX(i, 0); pos.setY(i, 0); pos.setZ(i, 0); novaData[i].life = 1.0; }
+            triggerExplosion(0,0,0, 150); playSound('explode');
+            document.getElementById('overlay-layer').style.background = 'rgba(255,255,255,1.0)';
+            setTimeout(() => { document.getElementById('overlay-layer').style.background = 'rgba(0,0,0,0.3)'; }, 500);
+        }
+
+        // --- Gesture Detector Class ---
+        class GestureDetector {
+            dist(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+            detectOpenPalm(h) { return [8,12,16,20].every(i => h[i].y < h[i-2].y); }
+            detectFist(h) { return [8,12,16,20].every(i => h[i].y > h[i-2].y); }
+            detectPoint(h) { 
+                let fingersClosed = (h[12].y > h[10].y && h[16].y > h[14].y && h[20].y > h[18].y);
+                return fingersClosed && (h[8].y < h[6].y) && (this.dist(h[4], h[5]) < 0.08);
+            }
+            detectZoomPose(h) {
+                let fingersClosed = (h[12].y > h[10].y && h[16].y > h[14].y && h[20].y > h[18].y);
+                return fingersClosed && (h[8].y < h[6].y) && (this.dist(h[4], h[5]) >= 0.08);
+            }
+            detectPinch(h) { return this.dist(h[4], h[8]) < 0.05; }
+        }
+        const gd = new GestureDetector();
+
+        // --- Core Tracking ---
+        const videoElement = document.getElementById('video');
+        const skeletonCanvas = document.getElementById('skeleton-canvas'); skeletonCanvas.width = window.innerWidth; skeletonCanvas.height = window.innerHeight;
+        const ctx = skeletonCanvas.getContext('2d');
+        const uiCanvas = document.getElementById('ui-canvas'); uiCanvas.width = window.innerWidth; uiCanvas.height = window.innerHeight;
+        const uiCtx = uiCanvas.getContext('2d');
+        
+        let hoverProgress = {}; let prevHandData = null; let prevDist = null;
+        let pinchCooldown = 0; let clapCooldown = 0; let lastGestureType = "none";
+        let targetCameraZ = 600; let prevZoomDist = null;
+        let globalWindX = 0.3, globalWindY = 0; // idle wind force
+        let frameCount = 0, fpsTime = performance.now(), fpsDisplay = 0;
+        let auraTrailX = -9999, auraTrailY = -9999; // fingertip aura
+
+        function getButtons() { return Array.from(document.querySelectorAll('.glass-item')).map(el => { return { id: el.id, scene: el.dataset.scene, rect: el.getBoundingClientRect() }; }); }
+
+        function onResults(results) {
+            document.getElementById('loading').style.display = 'none';
+            ctx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height); uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+            
+            const handLandmarks = results.multiHandLandmarks || [];
+            let detectedGesture = "None"; let actionText = "";
+            isTimeFrozen = false; speedMult = 1.0;
+            targetGatherPoint = null; energyBallTargetPos = null;
+            
+            const w = skeletonCanvas.width; const h = skeletonCanvas.height;
+            const buttons = getButtons();
+
+            if (pinchCooldown > 0) pinchCooldown--; if (clapCooldown > 0) clapCooldown--;
+
+            if (handLandmarks.length > 0) {
+                const lm = handLandmarks[0];
+                const px3d = ((1.0 - lm[9].x) - 0.5) * 2000; const py3d = -(lm[9].y - 0.5) * 1500;
+                
+                // --- 1 Hand Gestures ---
+                if (gd.detectOpenPalm(lm)) {
+                    prevZoomDist = null;
+                    detectedGesture = "✋ Open Palm"; actionText = "FREEZE TIME 🧊"; isTimeFrozen = true;
+                    if (lastGestureType !== "freeze") { playSound('freeze'); lastGestureType = "freeze"; }
+                    document.getElementById('overlay-layer').style.background = 'rgba(0,50,100,0.6)';
+                } else if (gd.detectFist(lm)) {
+                    prevZoomDist = null;
+                    detectedGesture = "✊ Fist"; actionText = "EXPLODE BURST 💥"; speedMult = 5.0;
+                    if (prevHandData && gd.detectOpenPalm(prevHandData)) { triggerExplosion(px3d, py3d, 0, 100); playSound('explode'); }
+                    lastGestureType = "fist";
+                } else if (gd.detectPoint(lm)) {
+                    prevZoomDist = null;
+                    detectedGesture = "👆 Point"; actionText = "VORTEX DUSTBALL 🧲";
+                    targetGatherPoint = new THREE.Vector3(((1.0 - lm[8].x) - 0.5) * 2000, -(lm[8].y - 0.5) * 1500, 0);
+                    energyBallTargetPos = targetGatherPoint; energyBallTargetScale = 0.8;
+                    lastGestureType = "point";
+                } else if (gd.detectZoomPose(lm)) {
+                    detectedGesture = "📐 Expand/Contract"; actionText = "ZOOM CAMERA 🔎";
+                    let currentDist = gd.dist(lm[4], lm[8]);
+                    if (prevZoomDist !== null) {
+                        let delta = currentDist - prevZoomDist;
+                        targetCameraZ += delta * 6000;
+                        if (targetCameraZ < 150) targetCameraZ = 150;
+                        if (targetCameraZ > 2500) targetCameraZ = 2500;
+                    }
+                    prevZoomDist = currentDist;
+                    lastGestureType = "zoom";
+                } else if (gd.detectPinch(lm)) {
+                    prevZoomDist = null;
+                    detectedGesture = "🤏 Pinch"; actionText = "SPAWN PARTICLES ✨";
+                    if (pinchCooldown === 0) { triggerExplosion(px3d, py3d, 0, 40); playSound('spawn'); pinchCooldown = 30; }
+                    lastGestureType = "pinch";
+                } else {
+                    prevZoomDist = null;
+                    document.getElementById('overlay-layer').style.background = 'rgba(0,0,0,0.3)';
+                    lastGestureType = "none";
+                }
+
+                // --- UI Dropdown Hover ---
+                const fingerX = (1.0 - lm[8].x) * w; const fingerY = lm[8].y * h;
+                const panelElem = document.getElementById('scene-selector'); const panelRect = panelElem.getBoundingClientRect();
+                if (fingerX >= panelRect.left - 50) {
+                    panelElem.scrollTop += ((fingerY - panelRect.top) / panelRect.height - 0.5) * 25;
+                    for (let btn of buttons) {
+                        if (fingerX >= btn.rect.left - 20 && fingerX <= btn.rect.right + 20 && fingerY >= btn.rect.top - 20 && fingerY <= btn.rect.bottom + 20) {
+                            hoverProgress[btn.id] = (hoverProgress[btn.id] || 0) + 0.05; 
+                            uiCtx.strokeStyle = '#00ffff'; uiCtx.lineWidth = 4; uiCtx.beginPath();
+                            uiCtx.arc(btn.rect.left + 25, btn.rect.top + btn.rect.height/2, 15, -Math.PI/2, -Math.PI/2 + (Math.PI*2*hoverProgress[btn.id])); uiCtx.stroke();
+                            document.getElementById(btn.id).style.boxShadow = `0 0 20px rgba(0,255,255,${hoverProgress[btn.id]})`;
+                            if (hoverProgress[btn.id] >= 1.0) { switchScene(btn.scene); hoverProgress[btn.id] = 0; playSound('spawn'); }
+                        } else {
+                            hoverProgress[btn.id] = 0;
+                            if(!document.getElementById(btn.id).classList.contains('active')) document.getElementById(btn.id).style.boxShadow = '';
+                        }
+                    }
+                }
+
+                // --- 2 Hand Gestures ---
+                if (handLandmarks.length == 2) {
+                    const h1 = handLandmarks[0]; const h2 = handLandmarks[1];
+                    const dist = Math.hypot((h1[9].x - h2[9].x)*w, (h1[9].y - h2[9].y)*h);
+                    let pMidX = ((1.0 - (h1[9].x + h2[9].x)/2) - 0.5) * 2000; let pMidY = -(((h1[9].y + h2[9].y)/2) - 0.5) * 1500;
+                    targetGatherPoint = new THREE.Vector3(pMidX, pMidY, 0);
+
+                    if (prevDist !== null && (prevDist - dist) > 100 && dist < 150 && clapCooldown === 0) {
+                        detectedGesture = "👏 Clap"; actionText = "THUNDERCLAP ⚡";
+                        triggerExplosion(pMidX, pMidY, 0, 180); playSound('clap'); clapCooldown = 40; lastGestureType = "clap";
+                    } else if (dist < 400) {
+                        detectedGesture = "🙌 Two Hands";
+                        if (currentScene === 'rain') {
+                            actionText = "ELECTRIC BRIDGE ⚡";
+                            const fingers = [4, 8, 12, 16, 20]; ctx.lineWidth = 3; ctx.shadowBlur = 15; ctx.shadowColor = '#00ffff';
+                            for (let f of fingers) {
+                                const px1 = (1.0 - h1[f].x)*w, py1 = h1[f].y*h; const px2 = (1.0 - h2[f].x)*w, py2 = h2[f].y*h; const fdist = Math.hypot(px2-px1, py2-py1);
+                                if (fdist < 500) { 
+                                    ctx.strokeStyle = `rgba(150, 255, 255, ${0.4 + 0.6 * (1.0 - fdist/500)})`; ctx.beginPath(); ctx.moveTo(px1, py1);
+                                    for (let s=1, steps=7; s<=steps; s++) {
+                                        let t = s/steps; let tx = px1 + (px2-px1)*t; let ty = py1 + (py2-py1)*t;
+                                        if (s < steps) { tx += (Math.random()-0.5)*60; ty += (Math.random()-0.5)*60; }
+                                        ctx.lineTo(tx, ty);
+                                    }
+                                    ctx.stroke();
+                                }
+                            }
+                        } else if (currentScene === 'energy') {
+                            actionText = "KAMEHAMEHA CHARGE 🔵"; energyBallTargetPos = targetGatherPoint; energyBallTargetScale = Math.min(3.5, 1.0 + (300 / Math.max(dist, 50)));
+                        } else if (currentScene === 'fire') { actionText = "FIRE GATHER 🔥";
+                        } else if (currentScene === 'leaves') { actionText = "LEAF GATHER 🍃";
+                        } else if (currentScene === 'hurricane' || currentScene === 'wind') { actionText = "DUST VORTEX 🌪️";
+                        } else { actionText = "GATHER ✨"; }
+
+                        if (currentScene !== 'rain' && currentScene !== 'energy') {
+                            ctx.beginPath(); ctx.moveTo((1.0 - h1[9].x)*w, h1[9].y*h); ctx.lineTo((1.0 - h2[9].x)*w, h2[9].y*h);
+                            ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 4; ctx.stroke();
+                        }
+                    }
+                    prevDist = dist;
+                } else { prevDist = null; }
+
+                // Draw Glowing Skeleton + Hand Aura + Sparkles
+                const now2 = performance.now();
+                for (const lm of handLandmarks) {
+                    const skeletonColor = isTimeFrozen ? '#00ffaa' : (speedMult>1 ? '#ff3333' : '#00ffff');
+                    ctx.save(); ctx.strokeStyle = skeletonColor;
+                    ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 20; ctx.lineWidth = 3;
+                    const connections = window.HAND_CONNECTIONS;
+                    if(connections) { ctx.beginPath(); for(let c of connections) { ctx.moveTo((1.0 - lm[c[0]].x)*w, lm[c[0]].y*h); ctx.lineTo((1.0 - lm[c[1]].x)*w, lm[c[1]].y*h); } ctx.stroke(); }
+                    ctx.fillStyle = '#fff'; for(let pt of lm) { ctx.beginPath(); ctx.arc((1.0 - pt.x)*w, pt.y*h, 4, 0, Math.PI*2); ctx.fill(); }
+
+                    // Fingertip aura glow
+                    const ftx = (1.0 - lm[8].x)*w; const fty = lm[8].y*h;
+                    auraTrailX = ftx; auraTrailY = fty;
+                    const pulse = 0.6 + 0.4 * Math.sin(now2 * 0.005);
+                    const auraGrad = ctx.createRadialGradient(ftx, fty, 0, ftx, fty, 40 * pulse);
+                    auraGrad.addColorStop(0, 'rgba(0,255,255,0.5)'); auraGrad.addColorStop(1, 'rgba(0,255,255,0)');
+                    ctx.fillStyle = auraGrad; ctx.beginPath(); ctx.arc(ftx, fty, 40 * pulse, 0, Math.PI*2); ctx.fill();
+
+                    // Sparkle burst at fingertip
+                    for (let s = 0; s < 3; s++) {
+                        const sx = ftx + (Math.random()-0.5)*50; const sy = fty + (Math.random()-0.5)*50;
+                        ctx.fillStyle = `rgba(255,255,200,${Math.random()*0.7})`;
+                        ctx.beginPath(); ctx.arc(sx, sy, Math.random()*2.5, 0, Math.PI*2); ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                // Draw shockwave rings
+                for (let sw of shockwaves) {
+                    ctx.save(); ctx.strokeStyle = `rgba(0,255,255,${sw.alpha})`; ctx.lineWidth = 3;
+                    ctx.shadowBlur = 20; ctx.shadowColor = '#00ffff';
+                    ctx.beginPath(); ctx.arc(sw.x, sw.y, sw.r, 0, Math.PI*2); ctx.stroke();
+                    ctx.restore();
+                    sw.r += 12; sw.alpha -= 0.04;
+                }
+                shockwaves = shockwaves.filter(sw => sw.alpha > 0);
+
+                // Gather point indicator ring
+                if (targetGatherPoint) {
+                    const gpx = w/2 + (targetGatherPoint.x / 2000) * w * 0.5;
+                    const gpy = h/2 - (targetGatherPoint.y / 1500) * h * 0.5;
+                    const ringPulse = 0.5 + 0.5 * Math.sin(now2 * 0.008);
+                    ctx.save(); ctx.strokeStyle = `rgba(255,200,0,${0.6 + 0.4*ringPulse})`;
+                    ctx.lineWidth = 2; ctx.shadowBlur = 15; ctx.shadowColor = '#ffcc00';
+                    ctx.setLineDash([8,6]);
+                    ctx.beginPath(); ctx.arc(gpx, gpy, 30 + 10*ringPulse, 0, Math.PI*2); ctx.stroke();
+                    ctx.restore();
+                }
+
+                prevHandData = lm;
+            } else {
+                prevHandData = null; prevDist = null; lastGestureType = "none";
+                document.getElementById('overlay-layer').style.background = 'rgba(0,0,0,0.3)';
+            }
+            
+            document.getElementById('gesture-text').innerText = "Gesture: " + detectedGesture;
+            document.getElementById('action-text').innerText = actionText;
+            if (detectedGesture !== 'None') addGestureHistory(detectedGesture);
+        }
+
+        const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+        hands.onResults(onResults);
+
+        const camera_util = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 1280, height: 720 });
+        camera_util.start();
+
+        // --- 3. Animation Engine ---
+        function applyExplosion(pos, i, d, expCenter, impulse, scale=1.0) {
+            let dx = pos.getX(i) - expCenter.x; let dy = pos.getY(i) - expCenter.y; let dz = pos.getZ(i) - expCenter.z;
+            let dist = Math.sqrt(dx*dx + dy*dy + dz*dz) + 0.1;
+            let f = impulse * 6000 * scale / (dist * dist);
+            d.vx += (dx/dist)*f; d.vy += (dy/dist)*f; d.vz += (dz/dist)*f;
+        }
+
+        function applyGather(pos, i, d, gPoint, strength) {
+            let dx = gPoint.x - pos.getX(i); let dy = gPoint.y - pos.getY(i); let dz = gPoint.z - pos.getZ(i);
+            let dist = Math.sqrt(dx*dx + dy*dy + dz*dz) + 0.1;
+            d.vx += dx * strength; d.vy += dy * strength; d.vz += dz * strength;
+            let orbit = strength * 60.0;
+            d.vx += (-dz / dist) * orbit; d.vz += (dx / dist) * orbit; d.vy += (Math.random()-0.5) * orbit * 0.2;
+        }
+
+        let lastTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const now = performance.now();
+            let dt = (now - lastTime) / 16.666; if (dt > 3) dt = 3;
+            lastTime = now;
+
+            // FPS counter
+            frameCount++;
+            if (now - fpsTime > 500) {
+                fpsDisplay = Math.round(frameCount * 1000 / (now - fpsTime));
+                document.getElementById('fps-counter').innerText = `FPS: ${fpsDisplay} | Particles: ${bigRainCount + smallRainCount + fireCount + cloudCount}`;
+                frameCount = 0; fpsTime = now;
+            }
+
+            explosionImpulse *= Math.pow(0.8, dt); if (explosionImpulse < 0.1) explosionImpulse = 0;
+
+            // Bloom reacts to explosion
+            bloomPass.strength = 1.5 + explosionImpulse * 0.05;
+
+            // Idle turbulence wind force (gentle Perlin-like sine)
+            globalWindX = Math.sin(now * 0.0003) * 0.8;
+            globalWindY = Math.sin(now * 0.0002) * 0.3;
+            
+            // Cinematic Camera Shake & Zoom
+            let shakeX = 0; let shakeY = 0;
+            if (explosionImpulse > 0) {
+                shakeX = (Math.random()-0.5) * explosionImpulse * 1.5;
+                shakeY = (Math.random()-0.5) * explosionImpulse * 1.5;
+            }
+            
+            camera.position.z += (targetCameraZ - camera.position.z) * 0.1 * dt;
+            camera.position.x = shakeX; camera.position.y = shakeY;
+
+            if (targetGatherPoint) {
+                isGathering = true; smoothGatherPoint.lerp(targetGatherPoint, 0.15 * dt);
+            } else {
+                isGathering = false;
+            }
+
+            let currentGP = isGathering ? smoothGatherPoint : null;
+            
+            if(currentScene === 'rain') {
+                const bPos = bigRainGeo.attributes.position;
+                for(let i=0; i<bigRainCount; i++) {
+                    let d = bigData[i];
+                    if (explosionImpulse > 0) applyExplosion(bPos, i, d, explosionCenter, explosionImpulse, 1.0);
+                    if (currentGP) applyGather(bPos, i, d, currentGP, 0.015);
+                    d.vx += globalWindX * dt; // global wind turbulence
+                    d.vx *= Math.pow(0.92, dt); d.vy *= Math.pow(0.92, dt); d.vz *= Math.pow(0.92, dt);
+                    let x = bPos.getX(i); let y = bPos.getY(i); let z = bPos.getZ(i);
+                    if (!isTimeFrozen) { x += d.vx * speedMult * dt; y += (d.vy - d.baseSpeed) * speedMult * dt; z += d.vz * speedMult * dt; }
+                    if(y < -1500) { y = 1500; x = (Math.random()-0.5)*3000; d.vy=0; }
+                    if (x > 2000) x -= 4000; if (x < -2000) x += 4000;
+                    bPos.setX(i, x); bPos.setY(i, y); bPos.setZ(i, z);
+                }
+                bPos.needsUpdate = true;
+                
+                const sPos = smallRainGeo.attributes.position;
+                for(let i=0; i<smallRainCount; i++) {
+                    let d = smallData[i];
+                    if (explosionImpulse > 0) applyExplosion(sPos, i, d, explosionCenter, explosionImpulse, 0.5);
+                    if (currentGP) applyGather(sPos, i, d, currentGP, 0.015);
+                    d.vx += globalWindX * 0.5 * dt;
+                    d.vx *= Math.pow(0.92, dt); d.vy *= Math.pow(0.92, dt); d.vz *= Math.pow(0.92, dt);
+                    let x = sPos.getX(i); let y = sPos.getY(i); let z = sPos.getZ(i);
+                    if (!isTimeFrozen) { x += d.vx * speedMult * dt; y += (d.vy - d.baseSpeed) * speedMult * dt; z += d.vz * speedMult * dt; }
+                    if(y < -1500) { y = 1500; x = (Math.random()-0.5)*3000; d.vy=0; }
+                    if (x > 2000) x -= 4000; if (x < -2000) x += 4000;
+                    sPos.setX(i, x); sPos.setY(i, y); sPos.setZ(i, z);
+                }
+                sPos.needsUpdate = true;
+            }
+            
+            if(currentScene === 'hurricane' && !isTimeFrozen) {
+                const pos = hurrGeo.attributes.position;
+                for(let i=0; i<hurrCount; i++) {
+                    let d = hurrData[i]; d.angle += d.speed * speedMult * dt;
+                    let cx = 0, cy = 0, cz = 0;
+                    if (explosionImpulse > 0) d.radius += explosionImpulse * 5 * dt;
+                    if (currentGP) { cx += currentGP.x; cy = currentGP.y; cz = currentGP.z; d.radius *= Math.pow(0.90, dt); }
+                    else {
+                        d.radius -= d.inward * speedMult * dt; if(d.radius < 20) { d.radius = 800; d.height = 1000; }
+                        d.height -= 15 * speedMult * dt; if(d.height < -1500) d.height = 1500; cy = d.height;
+                    }
+                    pos.setX(i, cx + Math.cos(d.angle)*d.radius); pos.setY(i, cy + (currentGP ? (Math.random()-0.5)*200 : 0)); pos.setZ(i, cz + Math.sin(d.angle)*d.radius);
+                }
+                pos.needsUpdate = true;
+            }
+            
+            if(currentScene === 'leaves') {
+                leaves.forEach(l => {
+                    let d = l.userData;
+                    if (explosionImpulse > 0) applyExplosion(l, 0, d, explosionCenter, explosionImpulse * 0.5, 1.0);
+                    if (currentGP) {
+                        d.vx += (currentGP.x - l.position.x) * 0.05; d.vy += (currentGP.y - l.position.y) * 0.05; d.vz += (currentGP.z - l.position.z) * 0.05;
+                        d.vx += -(currentGP.z - l.position.z) * 0.02; d.vz += (currentGP.x - l.position.x) * 0.02;
+                    }
+                    d.vx *= Math.pow(0.92, dt); d.vy *= Math.pow(0.92, dt); d.vz *= Math.pow(0.92, dt);
+                    if (!isTimeFrozen) {
+                        d.time += 0.02 * speedMult * dt; l.position.y -= (d.fallSpeed * speedMult - d.vy) * dt;
+                        // Organic flutter physics
+                        d.vx += Math.sin(d.time * 0.5) * 0.5 * dt;
+                        l.position.x += (Math.sin(d.time) * d.drift * speedMult + d.vx) * dt; l.position.z += d.vz * dt;
+                        
+                        // Dynamic rotation based on velocity
+                        d.rotSpeed.x = Math.sin(d.time * 2) * 0.05; d.rotSpeed.y = Math.cos(d.time * 1.5) * 0.05;
+                        l.rotation.x += d.rotSpeed.x * speedMult * dt; l.rotation.y += d.rotSpeed.y * speedMult * dt; l.rotation.z += d.rotSpeed.z * speedMult * dt;
+                    }
+                    if(l.position.y < -1500) { l.position.y = 1500; l.position.x = (Math.random()-0.5)*2500; d.vy=0; }
+                    if (l.position.x > 2000) l.position.x -= 4000; if (l.position.x < -2000) l.position.x += 4000;
+                });
+            }
+
+            if(currentScene === 'fire') {
+                const pos = fireGeo.attributes.position;
+                const colors = fireGeo.attributes.color;
+                for(let i=0; i<fireCount; i++) {
+                    let d = fireData[i];
+                    if (explosionImpulse > 0) applyExplosion(pos, i, d, explosionCenter, explosionImpulse, 1.0);
+                    if (currentGP) applyGather(pos, i, d, currentGP, 0.05);
+                    d.vx *= Math.pow(0.9, dt); d.vy *= Math.pow(0.9, dt); d.vz *= Math.pow(0.9, dt);
+                    let x = pos.getX(i); let y = pos.getY(i); let z = pos.getZ(i);
+                    if (!isTimeFrozen) {
+                        x += (d.vx + d.driftX * speedMult) * dt; y += (d.vy + d.speedY * speedMult) * dt; z += d.vz * dt;
+                        d.life -= 0.012 * speedMult * dt;
+                    }
+                    if(d.life <= 0 || y > 1500) { d.life = 1.0; y = -1500 + Math.random()*200; x = (Math.random()-0.5)*2500; d.vx = 0; d.vy = 0; }
+                    pos.setX(i, x); pos.setY(i, y); pos.setZ(i, z);
+                    
+                    // Realistic Fire Color Gradient over lifetime (White -> Yellow -> Red -> Black)
+                    let r = 1.0; let g = Math.max(0, d.life * 1.5 - 0.2); let b = Math.max(0, d.life * 3.0 - 2.0);
+                    colors.setXYZ(i, r, g, b);
+                }
+                pos.needsUpdate = true; colors.needsUpdate = true;
+            }
+
+            if(currentScene === 'wind') {
+                const pos = windGeo.attributes.position;
+                for(let i=0; i<windCount; i++) {
+                    let d = windData[i];
+                    let x1 = pos.getX(i*2); let y1 = pos.getY(i*2); let z1 = pos.getZ(i*2);
+                    if (!isTimeFrozen) x1 += d.speedX * speedMult * dt;
+                    if(x1 > 3000) { x1 = -3000 - Math.random()*1000; y1 = (Math.random()-0.5)*2500; }
+                    pos.setX(i*2, x1); pos.setY(i*2, y1); pos.setZ(i*2, z1);
+                    pos.setX(i*2+1, x1 + d.len); pos.setY(i*2+1, y1); pos.setZ(i*2+1, z1);
+                }
+                pos.needsUpdate = true;
+            }
+
+            if(currentScene === 'clouds') {
+                const pos = cloudGeo.attributes.position;
+                for(let i=0; i<cloudCount; i++) {
+                    let d = cloudData[i];
+                    if (explosionImpulse > 0) applyExplosion(pos, i, d, explosionCenter, explosionImpulse, 0.1); 
+                    if (currentGP) applyGather(pos, i, d, currentGP, 0.005);
+                    d.vx *= Math.pow(0.95, dt); d.vy *= Math.pow(0.95, dt); d.vz *= Math.pow(0.95, dt);
+                    let x = pos.getX(i); let y = pos.getY(i); let z = pos.getZ(i);
+                    if (!isTimeFrozen) { x += (d.vx + d.drift * speedMult) * dt; y += d.vy * dt; z += d.vz * dt; }
+                    if (x > 4000) x -= 8000; if (x < -4000) x += 8000;
+                    pos.setX(i, x); pos.setY(i, y); pos.setZ(i, z);
+                }
+                pos.needsUpdate = true;
+            }
+
+            if (currentScene === 'energy' && !isTimeFrozen) {
+                if (energyBallTargetPos) {
+                    energyBallGroup.visible = true;
+                    smoothGatherPoint.lerp(energyBallTargetPos, 0.15 * dt);
+                    energyBallGroup.position.copy(smoothGatherPoint);
+                    energyBallGroup.scale.lerp(new THREE.Vector3(energyBallTargetScale, energyBallTargetScale, energyBallTargetScale), 0.15 * dt);
+                    energyBallGroup.rotation.y += 0.1 * speedMult * dt; energyBallGroup.rotation.z += 0.05 * speedMult * dt;
+                    const pos = eGeo.attributes.position;
+                    for(let i=0; i<eCount; i++) {
+                        let d = eData[i]; d.angleX += d.speed * speedMult * 2 * dt; d.angleY += d.speed * speedMult * 1.5 * dt;
+                        pos.setX(i, Math.cos(d.angleX) * d.radius); pos.setY(i, Math.sin(d.angleY) * Math.cos(d.angleX) * d.radius); pos.setZ(i, Math.sin(d.angleX) * d.radius);
+                    }
+                    pos.needsUpdate = true;
+                } else {
+                    energyBallGroup.scale.lerp(new THREE.Vector3(0.01, 0.01, 0.01), 0.1 * dt);
+                    if (energyBallGroup.scale.x < 0.05) energyBallGroup.visible = false;
+                }
+            }
+            
+            if (isNovaActive && !isTimeFrozen) {
+                const pos = novaGeo.attributes.position;
+                for(let i=0; i<novaCount; i++) {
+                    let d = novaData[i];
+                    if (d.life > 0) {
+                        pos.setX(i, pos.getX(i) + d.dx * d.speed * dt); pos.setY(i, pos.getY(i) + d.dy * d.speed * dt); pos.setZ(i, pos.getZ(i) + d.dz * d.speed * dt);
+                        d.life -= 0.02 * dt;
+                    }
+                }
+                pos.needsUpdate = true;
+                if (novaData[0].life <= 0) { isNovaActive = false; novaGroup.visible = false; }
+            }
+
+            // Render using EffectComposer to trigger Bloom!
+            composer.render();
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            skeletonCanvas.width = window.innerWidth; skeletonCanvas.height = window.innerHeight;
+            uiCanvas.width = window.innerWidth; uiCanvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
